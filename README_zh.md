@@ -153,6 +153,18 @@ p2p_port=6000
 - 客户端连接后，在web中配置对应穿透服务即可
 - 更多高级用法见[完整文档](https://ehang-io.github.io/nps/)
 
+## 持续集成
+仓库自带两个 GitHub Actions 工作流，都在 `.github/workflows/` 下：
+
+| 工作流 | 触发条件 | 内容 |
+| --- | --- | --- |
+| `ci.yml` | push / PR 到 `master`、`main`，或手动 Run workflow | build、vet、单测、race 检测、npc SDK（cgo）编译，外加 12 个目标的交叉编译 |
+| `release.yml` | 发布 Release（`types: [published]`） | 打包 34 个发行包并上传到 Release，另含 Android、群晖 spk 与 Docker 镜像 |
+
+`ci.yml` 的构建范围是 `bridge/ client/ lib/ server/ web/ cmd/`，不含 `gui/`——桌面端依赖 fyne + OpenGL/X11 头文件，走本地或 `build.sh` 的桌面构建流程。
+
+Fork 之后第一次使用需要手动开启：进入仓库 **Actions** 页，点 **I understand my workflows, go ahead and enable them**。工作流文件是空的或路径不在 `.github/workflows/` 下时，Actions 列表里不会出现任何条目。
+
 ## 贡献
 - 如果遇到bug可以直接提交至dev分支
 - 使用遇到问题可以通过issues反馈
