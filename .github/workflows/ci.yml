@@ -51,7 +51,10 @@ jobs:
     - name: Test
       run: go test -count=1 ./lib/... ./server/... ./client/... ./web/...
 
+    # -race requires cgo, so it overrides the workflow-level CGO_ENABLED=0
     - name: Test with race detector
+      env:
+        CGO_ENABLED: '1'
       run: go test -race -count=1 ./lib/common ./lib/conn ./lib/file ./lib/pmux ./server/proxy
 
     - name: Build npc SDK (cgo, tag sdk)
