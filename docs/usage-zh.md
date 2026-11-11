@@ -156,6 +156,35 @@ auto_reconnection=true
 
 Windows 下服务模式同样用 `npc.exe install` / `start` / `stop`；注意服务模式读取的是安装目录下的 `conf\npc.conf`，命令行参数会被配置文件覆盖。
 
+### 客户端管理 API（可选）
+
+客户端可以开一个本地 REST API，用来查连接状态、增删服务端、改 `vkey` / `conn_type` 并热重连，不必重启进程或手改配置文件。
+
+```bash
+# 命令行开启（只监听本机）
+./npc -server=a.example.com:8024,b.example.com:8024 -vkey=123 \
+      -api_addr=127.0.0.1:8089 -api_key=change-me
+```
+
+```ini
+# 或写进 conf/npc.conf 的 [common]
+api_addr=127.0.0.1:8089
+api_key=change-me
+#api_allow_ip=127.0.0.1,10.0.0.0/8
+#api_read_only=false
+```
+
+```bash
+curl -s -H "X-Api-Key: change-me" http://127.0.0.1:8089/api/v1/status
+curl -s -X PUT -H "X-Api-Key: change-me" -H "Content-Type: application/json" \
+  -d '{"servers":["a.example.com:8024","b.example.com:8024"]}' \
+  http://127.0.0.1:8089/api/v1/servers
+```
+
+- 没配 `api_addr` 或没配 `api_key` 时不会启动；优先只监听 `127.0.0.1`，需要跨机调用时用 `api_allow_ip` 限定来源。
+- 配置文件模式下改服务端列表会**写回 `npc.conf`**（只改 `[common]` 里的对应行，注释和其他隧道段原样保留）；命令行模式下只在内存生效，响应里 `persisted=false`。
+- 完整接口、字段与错误码见 [客户端 REST API](npcapi.md)。
+
 ### 客户端里的隧道定义
 
 `npc.conf` 中除 `[common]` 外的每个 `[section]` 就是一条隧道，`mode` 决定类型：`tcp` / `udp` / `httpProxy` / `socks5` / `secret` / `p2p` / `file`。示例见包内自带的 `conf/npc.conf`。

@@ -4,6 +4,8 @@
 
 老的表单式接口（`/index/add`、`/client/list`，见 [web api](api.md)）仍然可用，但它需要自己算 `auth_key` 与时间戳，且参数是表单。新接入建议直接用本文的 REST 接口。
 
+> 客户端（`npc`）也有同风格的本地 API：查连接状态、增删服务端、改 `vkey` / `conn_type` 并热重连，见 [客户端 REST API](npcapi.md)。
+
 ## 开启与配置
 
 API 默认**关闭**，在 `nps.conf` 里配置 `api_key` 后生效，改完重启 nps。

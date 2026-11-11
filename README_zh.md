@@ -126,6 +126,17 @@ vkey=123
 `/api/v1` 提供隧道、客户端、域名与状态的接口，默认关闭：先在 `nps.conf` 配置 `api_key`
 并重启，请求头带 `Authorization: Bearer <key>`。完整字段与错误码见 `docs/restapi.md`。
 
+### 客户端 REST API
+`npc` 也能开一个本地管理 API，用来查每个服务端的连接状态、增删服务端、改 `vkey` / `conn_type` 并热重连：
+
+```bash
+./npc -server=nps.example.com:8024 -vkey=123 -api_addr=127.0.0.1:8089 -api_key=change-me
+curl -s -H "X-Api-Key: change-me" http://127.0.0.1:8089/api/v1/status
+```
+
+配置文件模式（`npc.conf`）下改服务端列表会写回 `[common]` 的 `server_addr`，注释与隧道段原样保留；
+命令行模式只在内存生效。接口与字段见 `docs/npcapi.md`。
+
 ### p2p 模式
 p2p 需要服务端同时配 `p2p_ip`（公网地址）与 `p2p_port`（起始端口，占用 `p2p_port ~ p2p_port+2` 三个 UDP 端口）：
 

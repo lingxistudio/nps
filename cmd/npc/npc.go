@@ -17,7 +17,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 )
 
 var (
@@ -40,6 +39,10 @@ var (
 	stunAddr       = flag.String("stun_addr", "stun.stunprotocol.org:3478", "stun server address (eg:stun.stunprotocol.org:3478)")
 	ver            = flag.Bool("version", false, "show current version")
 	disconnectTime = flag.Int("disconnect_timeout", 60, "not receiving check packet times, until timeout will disconnect the client")
+	apiAddr        = flag.String("api_addr", "", "local REST api listen addr (eg:127.0.0.1:8089), empty disables the api")
+	apiKey         = flag.String("api_key", "", "REST api credential, empty disables the api")
+	apiAllowIP     = flag.String("api_allow_ip", "", "REST api source ip whitelist, comma separated ip/cidr")
+	apiReadOnly    = flag.Bool("api_read_only", false, "REST api read only mode")
 )
 
 func main() {
@@ -238,19 +241,87 @@ func run() {
 		if len(servers) > 1 {
 			logs.Info("multi-server mode enabled, %d servers: %s", len(servers), strings.Join(servers, ", "))
 		}
-		for _, addr := range servers {
-			go func(serverAddr string) {
-				for {
-					client.NewRPClient(serverAddr, *verifyKey, *connType, *proxyUrl, nil, *disconnectTime).Start()
-					logs.Info("Client closed! It will be reconnected in five seconds, server %s", serverAddr)
-					time.Sleep(time.Second * 5)
-				}
-			}(addr)
+		m, err := client.NewCliManager(client.CliConfig{
+			VKey:           *verifyKey,
+			Tp:             *connType,
+			ProxyUrl:       *proxyUrl,
+			DisconnectTime: *disconnectTime,
+			TlsVerify:      *tlsVerify,
+		}, servers)
+		if err != nil {
+			logs.Error("invalid server address: %s", err.Error())
+			return
 		}
+		startClientApi(m)
+		go m.Start()
 	} else {
 		if *configPath == "" {
 			*configPath = common.GetConfigPath()
 		}
-		go client.StartFromFile(*configPath)
+		m, err := client.NewFileManager(*configPath)
+		if err != nil {
+			logs.Error("%s", err.Error())
+			return
+		}
+		logs.Info("loading configuration file %s successfully, servers: %s", *configPath, strings.Join(serverAddrs(m), ", "))
+		startClientApi(m)
+		go m.Start()
 	}
+}
+
+// startClientApi 按「命令行参数 > 配置文件 [common] > 环境变量」的优先级启动本地管理 API。
+// 没配地址或没配 key 都不会启动，避免无凭据的接口暴露在公网上。
+func startClientApi(m *client.Manager) {
+	addr := strings.TrimSpace(*apiAddr)
+	key := strings.TrimSpace(*apiKey)
+	allowIP := strings.TrimSpace(*apiAllowIP)
+	readOnly := *apiReadOnly
+	if cfg := m.FileConfig(); cfg != nil && cfg.CommonConfig != nil {
+		if addr == "" {
+			addr = strings.TrimSpace(cfg.CommonConfig.ApiAddr)
+		}
+		if key == "" {
+			key = strings.TrimSpace(cfg.CommonConfig.ApiKey)
+		}
+		if allowIP == "" {
+			allowIP = strings.TrimSpace(cfg.CommonConfig.ApiAllowIP)
+		}
+		if !readOnly {
+			readOnly = cfg.CommonConfig.ApiReadOnly
+		}
+	}
+	env := common.GetEnvMap()
+	if addr == "" {
+		addr = strings.TrimSpace(env["NPC_API_ADDR"])
+	}
+	if key == "" {
+		key = strings.TrimSpace(env["NPC_API_KEY"])
+	}
+	if addr == "" {
+		return
+	}
+	if key == "" {
+		logs.Warn("api_addr is set but api_key is empty, the client api stays disabled")
+		return
+	}
+	if _, err := client.StartApiServer(client.ApiOptions{
+		Addr:     addr,
+		Key:      key,
+		AllowIP:  allowIP,
+		ReadOnly: readOnly,
+		Manager:  m,
+	}); err != nil {
+		logs.Error("start client api failed: %s", err.Error())
+		return
+	}
+	logs.Notice("client api enabled on %s (read_only=%v)", addr, readOnly)
+}
+
+func serverAddrs(m *client.Manager) []string {
+	servers := m.Servers()
+	out := make([]string, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, s.Addr)
+	}
+	return out
 }

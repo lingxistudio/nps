@@ -369,6 +369,8 @@ func GetLocalUdpAddr() (net.Conn, error) {
 
 //parse template
 func ParseStr(str string) (string, error) {
+	// 去掉记事本等编辑器写入的 UTF-8 BOM，否则首个段名（如 [common]）匹配不上，配置会整体失效
+	str = strings.TrimPrefix(str, "\ufeff")
 	tmp := template.New("npc")
 	var err error
 	w := new(bytes.Buffer)

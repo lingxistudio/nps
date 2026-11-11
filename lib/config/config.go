@@ -21,6 +21,12 @@ type CommonConfig struct {
 	TlsVerify      bool
 	Client         *file.Client
 	DisconnectTime int
+	// 本地管理 API：供脚本 / 面板查询状态、增删服务端、修改连接参数。
+	// ApiAddr 为空表示不启动 API；ApiKey 为空时即使配了地址也不会启动（避免无凭据暴露）。
+	ApiAddr     string
+	ApiKey      string
+	ApiAllowIP  string
+	ApiReadOnly bool
 }
 
 // SplitServerAddr 解析 server_addr 配置，支持用逗号、分号或空白分隔多个服务端地址。
@@ -174,6 +180,14 @@ func dealCommon(s string) *CommonConfig {
 			common.InitPProfFromArg(item[1])
 		case "disconnect_timeout":
 			c.DisconnectTime = common.GetIntNoErrByStr(item[1])
+		case "api_addr":
+			c.ApiAddr = strings.TrimSpace(item[1])
+		case "api_key":
+			c.ApiKey = strings.TrimSpace(item[1])
+		case "api_allow_ip":
+			c.ApiAllowIP = strings.TrimSpace(item[1])
+		case "api_read_only":
+			c.ApiReadOnly = common.GetBoolByStr(strings.TrimSpace(item[1]))
 		}
 	}
 	return c

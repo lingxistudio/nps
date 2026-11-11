@@ -31,6 +31,10 @@ type TRPClient struct {
 	cnf            *config.Config
 	disconnectTime int
 	once           sync.Once
+	// stopCh 关闭表示该客户端已被要求停止重连（多服务端模式下各客户端互不影响）
+	stopCh chan struct{}
+	// stateHook 用于把连接状态上报给 Manager / API
+	stateHook func(state, message string)
 }
 
 // new client
@@ -44,29 +48,71 @@ func NewRPClient(svraddr string, vKey string, bridgeConnType string, proxyUrl st
 		cnf:            cnf,
 		disconnectTime: disconnectTime,
 		once:           sync.Once{},
+		stopCh:         make(chan struct{}),
 	}
 }
 
-var NowStatus int
-var CloseClient bool
+// SetStateHook 注册连接状态回调：connecting / online / offline
+func (s *TRPClient) SetStateHook(fn func(state, message string)) {
+	s.stateHook = fn
+}
+
+func (s *TRPClient) reportState(state, message string) {
+	if s.stateHook != nil {
+		s.stateHook(state, message)
+	}
+}
+
+func (s *TRPClient) isStopped() bool {
+	select {
+	case <-s.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
+var (
+	statusMu    sync.Mutex
+	NowStatus   int
+	CloseClient bool
+)
+
+func setNowStatus(v int) {
+	statusMu.Lock()
+	NowStatus = v
+	statusMu.Unlock()
+}
+
+func setCloseClientFlag(v bool) {
+	statusMu.Lock()
+	CloseClient = v
+	statusMu.Unlock()
+}
 
 // start
 func (s *TRPClient) Start() {
-	CloseClient = false
 retry:
-	if CloseClient {
+	if s.isStopped() {
 		return
 	}
-	NowStatus = 0
+	setNowStatus(0)
+	s.reportState(ServerStateConnecting, "")
 	c, err := NewConn(s.bridgeConnType, s.vKey, s.svrAddr, common.WORK_MAIN, s.proxyUrl)
 	if err != nil {
 		logs.Error("The connection server failed and will be reconnected in five seconds, error", err.Error())
-		time.Sleep(time.Second * 5)
+		s.reportState(ServerStateOffline, err.Error())
+		if !sleepOrStop(time.Second*5, s.stopCh) {
+			return
+		}
 		goto retry
 	}
 	if c == nil {
 		logs.Error("Error data from server, and will be reconnected in five seconds")
-		time.Sleep(time.Second * 5)
+		s.reportState(ServerStateOffline, "server returned unexpected data")
+		if !sleepOrStop(time.Second*5, s.stopCh) {
+			return
+		}
 		goto retry
 	}
 	logs.Info("Successful connection with server %s", s.svrAddr)
@@ -79,7 +125,8 @@ retry:
 	if s.cnf != nil && len(s.cnf.Healths) > 0 {
 		go heathCheck(s.cnf.Healths, s.signal)
 	}
-	NowStatus = 1
+	setNowStatus(1)
+	s.reportState(ServerStateOnline, "")
 	//msg connection, eg udp
 	s.handleMain()
 }
@@ -297,8 +344,14 @@ func (s *TRPClient) Close() {
 }
 
 func (s *TRPClient) closing() {
-	CloseClient = true
-	NowStatus = 0
+	setCloseClientFlag(true)
+	setNowStatus(0)
+	// 关闭 stopCh 让 Start 的重连循环立刻退出（每个客户端各自一份，互不影响）
+	select {
+	case <-s.stopCh:
+	default:
+		close(s.stopCh)
+	}
 	if s.tunnel != nil {
 		_ = s.tunnel.Close()
 	}

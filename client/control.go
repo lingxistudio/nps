@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"ehang.io/nps/lib/common"
@@ -91,61 +90,53 @@ var errAdd = errors.New("The server returned an error, which port or host may ha
 
 // StartFromFile 从配置文件启动客户端。server_addr 支持配置多个服务端，
 // 客户端会与每个服务端建立独立的控制通道与隧道，实现多服务端穿透。
+// 具体的连接生命周期由 Manager 统一管理，客户端 API 可以在此之上增删服务端。
 func StartFromFile(path string) {
-	cnf, err := config.NewConfig(path)
-	if err != nil || cnf.CommonConfig == nil {
+	m, err := NewFileManager(path)
+	if err != nil {
 		logs.Error("Config file %s loading error %v", path, err)
 		return
 	}
-	servers := cnf.CommonConfig.Servers
-	if len(servers) == 0 && cnf.CommonConfig.Server != "" {
-		servers = []string{cnf.CommonConfig.Server}
-	}
-	if len(servers) == 0 {
-		logs.Error("Config file %s has no server_addr", path)
-		return
-	}
-	logs.Info("Loading configuration file %s successfully, servers: %s", path, strings.Join(servers, ", "))
-	// conn_type=tls 时是否校验服务端证书由配置文件决定（自签部署默认不校验）
-	SetTlsVerify(cnf.CommonConfig.TlsVerify)
-	// secret / p2p 的本地监听端口与具体服务端无关，只启动一次
-	for _, v := range cnf.LocalServer {
-		go StartLocalServer(v, cnf.CommonConfig)
-	}
-	var wg sync.WaitGroup
-	for i, addr := range servers {
-		wg.Add(1)
-		go func(idx int, serverAddr string) {
-			defer wg.Done()
-			startFromServer(cnf, serverAddr, idx == 0)
-		}(i, addr)
-	}
-	wg.Wait()
+	logs.Info("Loading configuration file %s successfully, servers: %s", path, strings.Join(addrsOf(m.Servers()), ", "))
+	m.Start()
 }
 
-// startFromServer 与单个服务端注册配置并维持控制通道，断线后按需重连
-func startFromServer(cnf *config.Config, serverAddr string, primary bool) {
+// startFromServer 与单个服务端注册配置并维持控制通道，断线后按需重连。
+// r 提供停止信号与状态上报，客户端 API 增删服务端时通过它终止对应连接。
+func startFromServer(cnf *config.Config, r *serverRunner) {
+	serverAddr := r.addr
 	first := true
 	var fileServers []*http.Server
-	defer func() {
+	closeFileServers := func() {
 		for _, srv := range fileServers {
 			_ = srv.Close()
 		}
-	}()
+		fileServers = nil
+	}
+	defer closeFileServers()
 
 re:
+	if r.stopped() {
+		return
+	}
 	if first || cnf.CommonConfig.AutoReconnection {
 		if !first {
 			logs.Info("[%s] Reconnecting...", serverAddr)
-			time.Sleep(time.Second * 5)
+			// 可被 stop 打断，API 删除该服务端时不必等满 5 秒
+			if !sleepOrStop(time.Second*5, r.stop) {
+				return
+			}
 		}
 	} else {
+		r.onState(ServerStateOffline, "auto_reconnection is disabled")
 		return
 	}
 	first = false
+	r.onState(ServerStateConnecting, "")
 	c, err := NewConn(cnf.CommonConfig.Tp, cnf.CommonConfig.VKey, serverAddr, common.WORK_CONFIG, cnf.CommonConfig.ProxyUrl)
 	if err != nil {
 		logs.Error("[%s] %s", serverAddr, err.Error())
+		r.onState(ServerStateOffline, err.Error())
 		goto re
 	}
 	var isPub bool
@@ -158,20 +149,23 @@ re:
 		// send global configuration to server and get status of config setting
 		if _, err := c.SendInfo(cnf.CommonConfig.Client, common.NEW_CONF); err != nil {
 			logs.Error(err)
+			r.onState(ServerStateOffline, err.Error())
 			goto re
 		}
 		if !c.GetAddStatus() {
 			logs.Error("the web_user may have been occupied!")
+			r.onState(ServerStateOffline, "the web_user may have been occupied")
 			goto re
 		}
 
 		if b, err = c.GetShortContent(16); err != nil {
 			logs.Error(err)
+			r.onState(ServerStateOffline, err.Error())
 			goto re
 		}
 		vkey = string(b)
 	}
-	if primary {
+	if r.primary {
 		ioutil.WriteFile(filepath.Join(common.GetTmpPath(), "npc_vkey.txt"), []byte(vkey), 0600)
 	}
 
@@ -179,10 +173,12 @@ re:
 	for _, v := range cnf.Hosts {
 		if _, err := c.SendInfo(v, common.NEW_HOST); err != nil {
 			logs.Error(err)
+			r.onState(ServerStateOffline, err.Error())
 			goto re
 		}
 		if !c.GetAddStatus() {
 			logs.Error(errAdd, v.Host)
+			r.onState(ServerStateOffline, errAdd.Error())
 			goto re
 		}
 	}
@@ -191,10 +187,12 @@ re:
 	for _, v := range cnf.Tasks {
 		if _, err := c.SendInfo(v, common.NEW_TASK); err != nil {
 			logs.Error(err)
+			r.onState(ServerStateOffline, err.Error())
 			goto re
 		}
 		if !c.GetAddStatus() {
 			logs.Error(errAdd, v.Ports, v.Remark)
+			r.onState(ServerStateOffline, errAdd.Error())
 			goto re
 		}
 		if v.Mode == "file" {
@@ -206,18 +204,17 @@ re:
 	}
 
 	c.Close()
-	if primary {
+	if r.primary {
 		if cnf.CommonConfig.Client.WebUserName == "" || cnf.CommonConfig.Client.WebPassword == "" {
 			logs.Notice("web access login username:user password:%s", vkey)
 		} else {
 			logs.Notice("web access login username:%s password:%s", cnf.CommonConfig.Client.WebUserName, cnf.CommonConfig.Client.WebPassword)
 		}
 	}
-	NewRPClient(serverAddr, vkey, cnf.CommonConfig.Tp, cnf.CommonConfig.ProxyUrl, cnf, cnf.CommonConfig.DisconnectTime).Start()
-	for _, srv := range fileServers {
-		_ = srv.Close()
-	}
-	fileServers = nil
+	cl := NewRPClient(serverAddr, vkey, cnf.CommonConfig.Tp, cnf.CommonConfig.ProxyUrl, cnf, cnf.CommonConfig.DisconnectTime)
+	cl.SetStateHook(r.onState)
+	cl.Start()
+	closeFileServers()
 	goto re
 }
 
