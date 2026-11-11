@@ -13,7 +13,9 @@ env:
 
 jobs:
 
-  build_assets:
+  # 仅构建服务端(nps)与客户端(npc)产物：17 个目标平台 x 2 = 34 个压缩包
+  # Android APK / Synology SPK / Docker 镜像 / npc_sdk 不在发布范围内
+  build_server_client:
 
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +32,7 @@ jobs:
     - name: Download dependencies
       run: go mod download
 
-    - name: Build
+    - name: Build nps and npc
       run: |
         chmod +x build.assets.sh
         ./build.assets.sh
@@ -39,6 +41,10 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
+          darwin_amd64_client.tar.gz
+          darwin_amd64_server.tar.gz
+          darwin_arm64_client.tar.gz
+          darwin_arm64_server.tar.gz
           freebsd_386_client.tar.gz
           freebsd_386_server.tar.gz
           freebsd_amd64_client.tar.gz
@@ -52,134 +58,20 @@ jobs:
           linux_arm64_client.tar.gz
           linux_arm64_server.tar.gz
           linux_arm_v5_client.tar.gz
-          linux_arm_v6_client.tar.gz
-          linux_arm_v7_client.tar.gz
           linux_arm_v5_server.tar.gz
+          linux_arm_v6_client.tar.gz
           linux_arm_v6_server.tar.gz
+          linux_arm_v7_client.tar.gz
           linux_arm_v7_server.tar.gz
-          linux_mips64le_client.tar.gz
-          linux_mips64le_server.tar.gz
           linux_mips64_client.tar.gz
           linux_mips64_server.tar.gz
-          linux_mipsle_client.tar.gz
-          linux_mipsle_server.tar.gz
+          linux_mips64le_client.tar.gz
+          linux_mips64le_server.tar.gz
           linux_mips_client.tar.gz
           linux_mips_server.tar.gz
-          darwin_amd64_client.tar.gz
-          darwin_amd64_server.tar.gz
+          linux_mipsle_client.tar.gz
+          linux_mipsle_server.tar.gz
           windows_386_client.tar.gz
           windows_386_server.tar.gz
           windows_amd64_client.tar.gz
           windows_amd64_server.tar.gz
-          npc_sdk.tar.gz
-
-  build_android:
-
-    runs-on: ubuntu-latest
-    steps:
-
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Build
-      run: |
-        chmod +x build.android.sh
-        docker run --rm -i -w /app -v $(pwd):/app -e ANDROID_HOME=/usr/local/android_sdk -e GOPROXY=direct fyneio/fyne-cross:android-latest /app/build.android.sh
-
-    - name: Upload
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          android_client.apk
-
-  build_spk:
-
-    runs-on: ubuntu-latest
-    steps:
-
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Set env
-      run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
-    - name: Build
-      run: |
-        git clone https://github.com/cnlh/spksrc.git ~/spksrc
-        mkdir ~/spksrc/nps && cp -rf ./* ~/spksrc/nps/
-        docker run -id --name spksrc --env VERSION=${{ env.RELEASE_VERSION }} -e GOPROXY=direct -v ~/spksrc:/spksrc synocommunity/spksrc /bin/bash
-        docker exec spksrc /bin/bash -c 'cd /spksrc && make setup && cd /spksrc/spk/npc && make'
-        cp ~/spksrc/packages/npc_noarch-all_${{ env.RELEASE_VERSION }}-1.spk ./npc_syno.spk
-
-    - name: Upload
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          npc_syno.spk
-
-  build_docker:
-
-    runs-on: ubuntu-latest
-    # fork 上通常没有配置 DOCKERHUB_* secrets，未配置时整段跳过而不是让发布失败
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-    steps:
-
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Set env
-      run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-
-    - name: Set up QEMU
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: docker/setup-qemu-action@v3
-
-    - name: Set up Docker Buildx
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: docker/setup-buildx-action@v3
-
-    - name: Cache Docker layers
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: actions/cache@v4
-      with:
-        path: /tmp/.buildx-cache
-        key: ${{ runner.os }}-buildx-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-buildx-
-
-    - name: Login to DockerHub
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-    - name: Build and push nps
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: ./Dockerfile.nps
-        platforms: linux/amd64,linux/arm,linux/arm64
-        push: true
-        tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/nps:latest
-          ${{ secrets.DOCKERHUB_USERNAME }}/nps:${{ env.RELEASE_VERSION }}
-
-    - name: Build and push npc
-      if: env.DOCKERHUB_USERNAME != ''
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: ./Dockerfile.npc
-        platforms: linux/amd64,linux/arm,linux/arm64
-        push: true
-        tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/npc:latest
-          ${{ secrets.DOCKERHUB_USERNAME }}/npc:${{ env.RELEASE_VERSION }}
-
-    - name: Skip notice
-      if: env.DOCKERHUB_USERNAME == ''
-      run: echo "DOCKERHUB_USERNAME secret 未配置，跳过 Docker 镜像推送"
-

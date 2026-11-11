@@ -1,11 +1,6 @@
 export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
 
-sudo apt-get update
-sudo apt-get install -y gcc-mingw-w64-i686 gcc-multilib
-env GOOS=windows GOARCH=386 CGO_ENABLED=1 CC=i686-w64-mingw32-gcc go build -tags sdk -ldflags "-s -w -extldflags -static -extldflags -static" -buildmode=c-shared -o npc_sdk.dll cmd/npc/sdk.go
-env GOOS=linux GOARCH=386 CGO_ENABLED=1 CC=gcc go build -tags sdk -ldflags "-s -w -extldflags -static -extldflags -static" -buildmode=c-shared -o npc_sdk.so cmd/npc/sdk.go
-tar -czvf npc_sdk.tar.gz npc_sdk.dll npc_sdk.so npc_sdk.h
-
+# 只构建服务端(nps)与客户端(npc)，不构建 npc_sdk（需要 cgo 交叉工具链）
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -extldflags -static -extldflags -static"  ./cmd/npc/npc.go
 
 tar -czvf linux_amd64_client.tar.gz npc conf/npc.conf conf/multi_account.conf
@@ -78,6 +73,10 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -extldflags -sta
 
 tar -czvf darwin_amd64_client.tar.gz npc conf/npc.conf conf/multi_account.conf
 
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -extldflags -static -extldflags -static" ./cmd/npc/npc.go
+
+tar -czvf darwin_arm64_client.tar.gz npc conf/npc.conf conf/multi_account.conf
+
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -extldflags -static -extldflags -static" ./cmd/nps/nps.go
 
 tar -czvf linux_amd64_server.tar.gz conf/nps.conf conf/tasks.json conf/clients.json conf/hosts.json conf/server.key  conf/server.pem web/views web/static nps
@@ -144,6 +143,10 @@ tar -czvf linux_mipsle_server.tar.gz conf/nps.conf conf/tasks.json conf/clients.
 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -extldflags -static -extldflags -static" ./cmd/nps/nps.go
 
 tar -czvf darwin_amd64_server.tar.gz conf/nps.conf conf/tasks.json conf/clients.json conf/hosts.json conf/server.key  conf/server.pem web/views web/static nps
+
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -extldflags -static -extldflags -static" ./cmd/nps/nps.go
+
+tar -czvf darwin_arm64_server.tar.gz conf/nps.conf conf/tasks.json conf/clients.json conf/hosts.json conf/server.key  conf/server.pem web/views web/static nps
 
 
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -extldflags -static -extldflags -static" ./cmd/nps/nps.go
