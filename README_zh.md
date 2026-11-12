@@ -126,6 +126,10 @@ vkey=123
 `/api/v1` 提供隧道、客户端、域名与状态的接口，默认关闭：先在 `nps.conf` 配置 `api_key`
 并重启，请求头带 `Authorization: Bearer <key>`。完整字段与错误码见 `docs/restapi.md`。
 
+需要 **0.26.13 及以上**的服务端二进制：旧版本没有这些路由，任何 `/api/v1/*` 都返回
+`404`（`/api/v1/health` 除外，它同样 404）。判定方法是看响应状态码：`404` 说明二进制
+太旧需要升级，`503 api_disabled` 才是「没配 api_key」。
+
 ### 客户端 REST API
 `npc` 也能开一个本地管理 API，用来查每个服务端的连接状态、增删服务端、改 `vkey` / `conn_type` 并热重连：
 
